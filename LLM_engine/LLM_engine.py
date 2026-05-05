@@ -2,6 +2,7 @@ import ollama
 import sys
 import os
 import json
+import re
 
 MODEL = os.environ.get('OLLAMA_MODEL', 'llama3')  # Change or set OLLAMA_MODEL env var
 PRECONTEXT_FILE = os.path.join(os.path.dirname(__file__), 'precontext.txt')
@@ -75,6 +76,71 @@ def is_valid_payload(payload):
         return False
     return all(isinstance(cart[key], int) for key in required_keys)
 
+
+def extract_json_candidates(text):
+    """Yield JSON values embedded in raw model text."""
+    if not isinstance(text, str):
+        return
+    stripped = text.strip()
+    if not stripped:
+        return
+
+    fence_match = re.search(r"```(?:json)?\s*(.*?)```", stripped, flags=re.IGNORECASE | re.DOTALL)
+    if fence_match:
+        yield from extract_json_candidates(fence_match.group(1))
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        yield value
+
+
+def normalize_payload(payload):
+    required_keys = STRICT_JSON_SCHEMA["properties"]["cart"]["required"]
+    cart = payload.get("cart", {})
+    normalized_cart = {}
+    for key in required_keys:
+        try:
+            normalized_cart[key] = int(cart.get(key, 0))
+        except (TypeError, ValueError):
+            normalized_cart[key] = 0
+    return {
+        "response": str(payload.get("response", "")).strip(),
+        "cart": normalized_cart,
+    }
+
+
+def parse_llm_payload(answer):
+    pending = [answer]
+    seen = set()
+    while pending:
+        value = pending.pop(0)
+        marker = repr(value)[:1000]
+        if marker in seen:
+            continue
+        seen.add(marker)
+
+        if isinstance(value, dict):
+            if "response" in value or "cart" in value:
+                payload = normalize_payload(value)
+                if is_valid_payload(payload):
+                    return payload
+            for key in ("content", "message", "data", "output"):
+                if key in value:
+                    pending.append(value[key])
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, str):
+            for candidate in extract_json_candidates(value):
+                pending.append(candidate)
+
+    raise ValueError("Model output did not contain a valid response/cart JSON payload")
+
 def main():
     client = ollama.Client()
     # Resolve a usable model from the Ollama instance
@@ -117,8 +183,8 @@ def main():
             )
             answer = response['message']['content']
             try:
-                payload = json.loads(answer)
-            except json.JSONDecodeError:
+                payload = parse_llm_payload(answer)
+            except Exception:
                 correction = client.chat(
                     model=selected_model,
                     messages=build_messages(
@@ -128,7 +194,7 @@ def main():
                     format=STRICT_JSON_SCHEMA,
                 )
                 answer = correction['message']['content']
-                payload = json.loads(answer)
+                payload = parse_llm_payload(answer)
 
             if not is_valid_payload(payload):
                 raise ValueError("Model returned JSON that does not match the required schema")

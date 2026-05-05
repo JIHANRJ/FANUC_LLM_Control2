@@ -11,6 +11,8 @@ import time
 import signal
 import atexit
 import argparse
+import socket
+import re
 from pathlib import Path
 
 # ANSI colors
@@ -27,6 +29,8 @@ LLM_ENGINE_DIR = PROJECT_ROOT / "LLM_engine"
 HANDLER_SCRIPT = ROBOT_HANDLER_DIR / "robot_handler.py"
 CHAT_SCRIPT = LLM_ENGINE_DIR / "chat.py"
 VOICE_CHAT_SCRIPT = PROJECT_ROOT / "voice_engine" / "voice_chat.py"
+FRONTEND_BACKEND_SCRIPT = PROJECT_ROOT / "fanuc_frontend_backend.py"
+FRONTEND_DIST_DIR = PROJECT_ROOT / "Fanuc-frontend" / "dist"
 PIPE_PATH = ROBOT_HANDLER_DIR / "robot_handler.pipe"
 CURRENT_CART = ROBOT_HANDLER_DIR / "current_cart.json"
 
@@ -46,6 +50,8 @@ DEFAULT_CONFIDENCE_LOGPROB_THRESHOLD = -0.9
 # Global process handles
 handler_proc = None
 chat_proc = None
+frontend_backend_proc = None
+frontend_server_proc = None
 
 
 def parse_args():
@@ -59,12 +65,16 @@ def parse_args():
     parser.add_argument("--amplitude-accept-threshold", type=float, default=DEFAULT_AMPLITUDE_ACCEPT_THRESHOLD, help="Minimum RMS amplitude accepted")
     parser.add_argument("--confidence-logprob-threshold", type=float, default=DEFAULT_CONFIDENCE_LOGPROB_THRESHOLD, help="Minimum avg_logprob accepted")
     parser.add_argument("--use-wake-word", action="store_true", help="Enable wake word mode if Picovoice key is configured")
+    parser.add_argument("--frontend", action="store_true", help="Launch Fanuc-frontend connected to the robot/LLM backend")
+    parser.add_argument("--frontend-host", default="127.0.0.1", help="Frontend/backend bind host")
+    parser.add_argument("--frontend-port", type=int, default=5173, help="Static frontend HTTP port")
+    parser.add_argument("--backend-port", type=int, default=9876, help="Frontend WebSocket backend port")
     return parser.parse_args()
 
 
 def cleanup():
     """Cleanup: terminate both processes and remove pipe."""
-    global handler_proc, chat_proc
+    global handler_proc, chat_proc, frontend_backend_proc, frontend_server_proc
     
     print(f"\n{RED}[MASTER] Shutting down...{RESET}")
     
@@ -83,6 +93,22 @@ def cleanup():
             chat_proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             chat_proc.kill()
+
+    if frontend_backend_proc and frontend_backend_proc.poll() is None:
+        print(f"{RED}[MASTER] Terminating frontend backend...{RESET}")
+        frontend_backend_proc.terminate()
+        try:
+            frontend_backend_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            frontend_backend_proc.kill()
+
+    if frontend_server_proc and frontend_server_proc.poll() is None:
+        print(f"{RED}[MASTER] Terminating frontend server...{RESET}")
+        frontend_server_proc.terminate()
+        try:
+            frontend_server_proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            frontend_server_proc.kill()
     
     if PIPE_PATH.exists():
         try:
@@ -109,6 +135,91 @@ def check_files(use_voice: bool = False):
             print(f"{RED}[ERROR] Missing file: {path}{RESET}")
             sys.exit(1)
     print(f"{YELLOW}[MASTER] All files verified{RESET}")
+
+
+def check_frontend_files():
+    required = [FRONTEND_BACKEND_SCRIPT, FRONTEND_DIST_DIR / "index.html"]
+    for path in required:
+        if not path.exists():
+            print(f"{RED}[ERROR] Missing file: {path}{RESET}")
+            sys.exit(1)
+    print(f"{YELLOW}[MASTER] Frontend files verified{RESET}")
+
+
+def find_open_port(host: str, preferred_port: int) -> int:
+    for port in range(preferred_port, preferred_port + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError(f"No open port found from {preferred_port} to {preferred_port + 19}")
+
+
+def configure_frontend_bundle(host: str, backend_port: int):
+    asset_dir = FRONTEND_DIST_DIR / "assets"
+    for asset_path in asset_dir.glob("index-*.js"):
+        source = asset_path.read_text()
+        updated = re.sub(r"ws://(?:localhost|127\.0\.0\.1):\d+", f"ws://{host}:{backend_port}", source)
+        if updated != source:
+            asset_path.write_text(updated)
+
+
+def start_frontend(args):
+    """Start the WebSocket bridge and static frontend server."""
+    global frontend_backend_proc, frontend_server_proc
+
+    args.frontend_port = find_open_port(args.frontend_host, args.frontend_port)
+    args.backend_port = find_open_port(args.frontend_host, args.backend_port)
+    configure_frontend_bundle(args.frontend_host, args.backend_port)
+    print(f"{YELLOW}[MASTER] Starting Fanuc frontend backend...{RESET}")
+    frontend_backend_proc = subprocess.Popen(
+        [
+            sys.executable,
+            str(FRONTEND_BACKEND_SCRIPT),
+            "--host",
+            args.frontend_host,
+            "--port",
+            str(args.backend_port),
+            "--robot-ip",
+            ROBOT_IP,
+            "--robot-port",
+            str(ROBOT_PORT),
+            "--auto-start",
+        ],
+        cwd=str(PROJECT_ROOT),
+    )
+
+    time.sleep(1)
+    if frontend_backend_proc.poll() is not None:
+        print(f"{RED}[ERROR] Frontend backend failed to start{RESET}")
+        sys.exit(1)
+
+    print(f"{YELLOW}[MASTER] Starting static frontend server...{RESET}")
+    frontend_server_proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "http.server",
+            str(args.frontend_port),
+            "--bind",
+            args.frontend_host,
+            "--directory",
+            str(FRONTEND_DIST_DIR),
+        ],
+        cwd=str(PROJECT_ROOT),
+    )
+
+    time.sleep(1)
+    if frontend_server_proc.poll() is not None:
+        print(f"{RED}[ERROR] Frontend server failed to start{RESET}")
+        cleanup()
+        sys.exit(1)
+
+    print(f"\n{CRX_GREEN}[MASTER] Frontend ready: http://{args.frontend_host}:{args.frontend_port}{RESET}")
+    print(f"{CRX_GREEN}[MASTER] WebSocket backend: ws://{args.frontend_host}:{args.backend_port}{RESET}\n")
 
 
 def start_handler():
@@ -229,6 +340,23 @@ def main():
     # Setup signal handler for Ctrl+C
     signal.signal(signal.SIGINT, signal_handler)
     atexit.register(cleanup)
+
+    if args.frontend:
+        check_frontend_files()
+        start_frontend(args)
+        try:
+            while True:
+                if frontend_backend_proc.poll() is not None:
+                    print(f"{RED}[ERROR] Frontend backend exited{RESET}")
+                    break
+                if frontend_server_proc.poll() is not None:
+                    print(f"{RED}[ERROR] Frontend server exited{RESET}")
+                    break
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            pass
+        cleanup()
+        return
     
     # Verify files
     check_files(use_voice=args.voice)
