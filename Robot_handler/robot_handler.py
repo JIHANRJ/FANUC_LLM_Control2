@@ -75,6 +75,17 @@ class RegisterOPCUA:
             write_register(self.client, index, int(value))
             print(f"{RED}[DEBUG] Write R[{index}] = {value}{RESET}", flush=True)
         except Exception as e:
+            error_str = str(e)
+            if "BadSessionIdInvalid" in error_str or "session" in error_str.lower():
+                print(f"{RED}[DEBUG] Session lost, reconnecting...{RESET}", flush=True)
+                self.__init__(self.ip, self.port)  # Reconnect
+                if self.connected:
+                    try:
+                        write_register(self.client, index, int(value))
+                        print(f"{RED}[DEBUG] Write R[{index}] = {value} (after reconnect){RESET}", flush=True)
+                        return
+                    except Exception as retry_e:
+                        print(f"{RED}[ERROR] Retry failed for R[{index}]: {retry_e}{RESET}", flush=True)
             print(f"{RED}[ERROR] Failed to write R[{index}]: {e}{RESET}", flush=True)
 
     def write_registers(self, start: int, values: List[int]):
@@ -86,6 +97,18 @@ class RegisterOPCUA:
             for i, v in enumerate(values):
                 print(f"{RED}[DEBUG] Write R[{start + i}] = {v}{RESET}", flush=True)
         except Exception as e:
+            error_str = str(e)
+            if "BadSessionIdInvalid" in error_str or "session" in error_str.lower():
+                print(f"{RED}[DEBUG] Session lost, reconnecting...{RESET}", flush=True)
+                self.__init__(self.ip, self.port)  # Reconnect
+                if self.connected:
+                    try:
+                        write_registers(self.client, start, [int(v) for v in values])
+                        for i, v in enumerate(values):
+                            print(f"{RED}[DEBUG] Write R[{start + i}] = {v} (after reconnect){RESET}", flush=True)
+                        return
+                    except Exception as retry_e:
+                        print(f"{RED}[ERROR] Retry failed for registers: {retry_e}{RESET}", flush=True)
             print(f"{RED}[ERROR] Failed to write registers: {e}{RESET}", flush=True)
 
     def dump(self):
