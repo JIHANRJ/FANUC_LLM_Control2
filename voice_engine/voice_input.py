@@ -3,8 +3,16 @@ Voice input module using faster-whisper for fast speech-to-text transcription.
 Includes wake word detection using Porcupine.
 """
 
-from faster_whisper import WhisperModel
-import sounddevice as sd
+try:
+    from faster_whisper import WhisperModel
+except Exception:
+    WhisperModel = None
+
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
+
 import numpy as np
 import threading
 import queue
@@ -73,6 +81,8 @@ class VoiceInput:
         self.wake_word_detected = False
 
         print(f"{BLUE}[VOICE] Loading faster-whisper model: {model}...{RESET}", flush=True)
+        if WhisperModel is None:
+            raise RuntimeError("faster_whisper is not installed. Install with: pip install faster-whisper")
         try:
             self.whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
             print(f"{GREEN}[VOICE] Whisper model loaded (int8 quantized - fast!){RESET}", flush=True)
@@ -108,6 +118,10 @@ class VoiceInput:
 
     def _record_audio(self):
         """Record audio from microphone in chunks."""
+        if sd is None:
+            print(f"{RED}[VOICE] sounddevice is not installed. Install with: pip install sounddevice{RESET}", flush=True)
+            return
+        
         if self.use_wake_word:
             print(f"{YELLOW}[VOICE] Listening for wake word 'jarvis'...{RESET}", flush=True)
         else:

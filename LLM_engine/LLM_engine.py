@@ -142,7 +142,22 @@ def parse_llm_payload(answer):
     raise ValueError("Model output did not contain a valid response/cart JSON payload")
 
 def main():
-    client = ollama.Client()
+    # Try to connect to Ollama on standard ports
+    ollama_host = os.environ.get('OLLAMA_HOST', None)
+    
+    try:
+        if ollama_host:
+            client = ollama.Client(host=ollama_host)
+        else:
+            # Try port 11435 first (what's running), then default 11434
+            try:
+                client = ollama.Client(host='http://127.0.0.1:11435')
+                client.list()  # Test connection
+            except:
+                client = ollama.Client(host='http://127.0.0.1:11434')
+    except:
+        client = ollama.Client()  # Use ollama's default
+        
     # Resolve a usable model from the Ollama instance
     try:
         available = [m.model for m in client.list().models]
