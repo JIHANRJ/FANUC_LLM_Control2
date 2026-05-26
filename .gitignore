@@ -42,13 +42,10 @@ Thumbs.db
 Robot_handler/robot_handler.pipe
 *.json~
 .ollama/
+llm_ctrl2/
 
 # Logs
 *.log
-
-# Allow tracking frontend build
-!Fanuc-frontend/dist/
-!Fanuc-frontend/dist/**
 
 # Allow tracking frontend build
 !Fanuc-frontend/dist/
