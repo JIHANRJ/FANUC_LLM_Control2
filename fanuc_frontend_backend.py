@@ -42,8 +42,11 @@ except Exception:
     VoiceInput = None
     VOICE_AVAILABLE = False
 
-ROBOT_IP = "172.168.10.2"
-ROBOT_PORT = 4880
+ROBOT_IP = os.environ.get("ROBOT_IP", "172.168.10.2")
+try:
+    ROBOT_PORT = int(os.environ.get("ROBOT_PORT", 4880))
+except (TypeError, ValueError):
+    ROBOT_PORT = 4880
 
 ITEM_NAMES = [
     "Nuttiess Chocolate",
@@ -560,8 +563,8 @@ class ThreadedWebSocketServer(socketserver.ThreadingMixIn, socketserver.TCPServe
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fanuc frontend WebSocket backend")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=9876)
+    parser.add_argument("--host", default=os.environ.get("FRONTEND_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("BACKEND_PORT", 9876)))
     parser.add_argument("--robot-ip", default=ROBOT_IP)
     parser.add_argument("--robot-port", type=int, default=ROBOT_PORT)
     parser.add_argument("--auto-start", action="store_true", help="Start handler and LLM immediately")

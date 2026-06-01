@@ -35,9 +35,12 @@ FRONTEND_DIST_DIR = PROJECT_ROOT / "Fanuc-frontend" / "dist"
 PIPE_PATH = ROBOT_HANDLER_DIR / "robot_handler.pipe"
 CURRENT_CART = ROBOT_HANDLER_DIR / "current_cart.json"
 
-# Robot connection
-ROBOT_IP = "172.168.10.2"
-ROBOT_PORT = 4880
+# Robot connection (allow override from environment for Docker)
+ROBOT_IP = os.environ.get("ROBOT_IP", "172.168.10.2")
+try:
+    ROBOT_PORT = int(os.environ.get("ROBOT_PORT", 4880))
+except (TypeError, ValueError):
+    ROBOT_PORT = 4880
 
 # Voice defaults
 DEFAULT_VOICE_MODEL = "base"
@@ -79,9 +82,9 @@ def parse_args():
     parser.add_argument("--confidence-logprob-threshold", type=float, default=default_confidence_logprob_threshold, help="Minimum avg_logprob accepted")
     parser.add_argument("--use-wake-word", action="store_true", help="Enable wake word mode if Picovoice key is configured")
     parser.add_argument("--frontend", action="store_true", help="Launch Fanuc-frontend connected to the robot/LLM backend")
-    parser.add_argument("--frontend-host", default="127.0.0.1", help="Frontend/backend bind host")
-    parser.add_argument("--frontend-port", type=int, default=5173, help="Static frontend HTTP port")
-    parser.add_argument("--backend-port", type=int, default=9876, help="Frontend WebSocket backend port")
+    parser.add_argument("--frontend-host", default=os.environ.get("FRONTEND_HOST", "127.0.0.1"), help="Frontend/backend bind host")
+    parser.add_argument("--frontend-port", type=int, default=int(os.environ.get("FRONTEND_PORT", 5173)), help="Static frontend HTTP port")
+    parser.add_argument("--backend-port", type=int, default=int(os.environ.get("BACKEND_PORT", 9876)), help="Frontend WebSocket backend port")
     return parser.parse_args()
 
 

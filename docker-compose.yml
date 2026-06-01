@@ -1,0 +1,19 @@
+services:
+  fanuc-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fanuc-control2
+    ports:
+      - "5173:5173"
+      - "9876:9876"
+    environment:
+      ROBOT_IP: ${ROBOT_IP:-172.168.10.2}
+      ROBOT_PORT: ${ROBOT_PORT:-4880}
+      FRONTEND_HOST: ${FRONTEND_HOST:-0.0.0.0}
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+      BACKEND_PORT: ${BACKEND_PORT:-9876}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
+    restart: unless-stopped
+    command: ["--frontend"]
